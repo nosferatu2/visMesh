@@ -136,11 +136,9 @@ class MeshTweakGUI(QMainWindow):
         main_layout.addWidget(right_panel, stretch=1)
 
     def load_initial_stl(self):
-        """Attempts to load default file or falls back to standard directory sweep"""
         if os.path.exists(self.stl_path):
             self.load_stl_mesh(self.stl_path)
         else:
-            # Check if there's any alternative file in triSurface to load natively
             search_dir = "constant/triSurface"
             if os.path.exists(search_dir):
                 files = [f for f in os.listdir(search_dir) if f.endswith('.stl')]
@@ -148,13 +146,10 @@ class MeshTweakGUI(QMainWindow):
                     self.stl_path = os.path.join(search_dir, files[0])
                     self.load_stl_mesh(self.stl_path)
                     return
-            
-            # Absolute fallback baseline
             self.raw_stl_mesh = pv.Sphere(radius=0.2)
             self.lbl_filename.setText("Using Fallback Sphere Mesh")
 
     def load_stl_mesh(self, target_path):
-        """Safely parses target STL grid coordinates"""
         try:
             self.raw_stl_mesh = pv.read(target_path)
             self.stl_path = target_path
@@ -164,7 +159,6 @@ class MeshTweakGUI(QMainWindow):
             self.lbl_status.setStyleSheet("color: red; font-weight: bold;")
 
     def browse_stl_file(self):
-        """Launches explorer modal targeted at local simulation directory"""
         default_dir = "constant/triSurface" if os.path.exists("constant/triSurface") else os.getcwd()
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Simulation STL Geometry", default_dir, 
@@ -199,10 +193,23 @@ class MeshTweakGUI(QMainWindow):
         self.plotter.add_axes()
         self.plotter.show_grid()
         
-        # 1. Translate and Render STL Mesh
+        # 1. Translate and Render STL Solid Mesh
         shifted_mesh = self.raw_stl_mesh.copy()
         shifted_mesh.translate([self.obj_x, self.obj_y, self.obj_z], inplace=True)
         self.plotter.add_mesh(shifted_mesh, color="white", smooth_shading=True, name="stl_obj")
+        
+        # ----------------------------------------------------
+        # ADDED: Extract and Draw Sharp Black Outlines / Feature Edges
+        # ----------------------------------------------------
+        # Extract features where surface angle meets or exceeds 30 degrees
+        stl_edges = shifted_mesh.extract_feature_edges(
+            boundary_edges=True, 
+            non_manifold_edges=True, 
+            feature_edges=True, 
+            manifold_edges=False,
+            feature_angle=30.0
+        )
+        self.plotter.add_mesh(stl_edges, color="black", line_width=2, name="stl_edges")
         
         # 2. Check Enclosure Boundaries
         stl_bounds = shifted_mesh.bounds
