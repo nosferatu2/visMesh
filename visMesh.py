@@ -1,16 +1,17 @@
 import sys
+import os
 import numpy as np
 import pyvista as pv
 from pyvistaqt import QtInteractor
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QLabel, QLineEdit, QPushButton, QGroupBox, QTextEdit)
+                             QHBoxLayout, QLabel, QLineEdit, QPushButton, QGroupBox, QTextEdit, QFileDialog)
 from PyQt5.QtCore import Qt
 
 class MeshTweakGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OpenFOAM Bounding Box & STL Real-Time Aligner")
-        self.setGeometry(100, 100, 1200, 900)
+        self.setGeometry(100, 100, 1200, 920)
         
         # Default Domain
         self.xmin, self.xmax = -2.0, 3.0
@@ -20,10 +21,12 @@ class MeshTweakGUI(QMainWindow):
         # Default STL Position Offset
         self.obj_x, self.obj_y, self.obj_z = 0.0, 0.0, 0.0
         
+        # Default fallback path
         self.stl_path = "constant/triSurface/lenz.stl"
+        self.raw_stl_mesh = None
         
         self.init_ui()
-        self.load_base_stl()
+        self.load_initial_stl()
         self.update_visualization()
 
     def init_ui(self):
@@ -32,11 +35,25 @@ class MeshTweakGUI(QMainWindow):
         main_layout = QHBoxLayout(central_widget)
         
         # ----------------------------------------------------
-        # LEFT SIDE: Status, 3D Canvas, and Object Shifts
+        # LEFT SIDE: File Selection, Status, 3D Canvas, Shifts
         # ----------------------------------------------------
         left_container = QWidget()
         left_layout = QVBoxLayout(left_container)
         
+        # File Browser Row
+        file_group = QGroupBox("Active Geometry Target")
+        file_layout = QHBoxLayout(file_group)
+        self.lbl_filename = QLabel(f"File: {os.path.basename(self.stl_path)}")
+        self.lbl_filename.setStyleSheet("font-family: 'Courier New'; font-weight: bold; color: #333;")
+        btn_browse = QPushButton("Browse STL...")
+        btn_browse.clicked.connect(self.browse_stl_file)
+        btn_browse.setStyleSheet("padding: 4px 12px; font-weight: bold;")
+        
+        file_layout.addWidget(self.lbl_filename, stretch=3)
+        file_layout.addWidget(btn_browse, stretch=1)
+        left_layout.addWidget(file_group)
+        
+        # Real-time Warning Status Label
         self.lbl_status = QLabel("Status: OK")
         self.lbl_status.setStyleSheet("font-size: 14px; font-weight: bold; color: green; padding: 4px;")
         left_layout.addWidget(self.lbl_status)
@@ -106,7 +123,6 @@ class MeshTweakGUI(QMainWindow):
         self.txt_output.setReadOnly(True)
         self.txt_output.setFontFamily("Courier New")
         self.txt_output.setFontPointSize(9.5)
-        self.txt_output.setToolTip("Highlight and copy this exact text for your blockMeshDict file.")
         output_layout.addWidget(self.txt_output)
         
         right_layout.addWidget(output_group)
@@ -119,12 +135,43 @@ class MeshTweakGUI(QMainWindow):
         
         main_layout.addWidget(right_panel, stretch=1)
 
-    def load_base_stl(self):
-        try:
-            self.raw_stl_mesh = pv.read(self.stl_path)
-        except Exception as e:
+    def load_initial_stl(self):
+        """Attempts to load default file or falls back to standard directory sweep"""
+        if os.path.exists(self.stl_path):
+            self.load_stl_mesh(self.stl_path)
+        else:
+            # Check if there's any alternative file in triSurface to load natively
+            search_dir = "constant/triSurface"
+            if os.path.exists(search_dir):
+                files = [f for f in os.listdir(search_dir) if f.endswith('.stl')]
+                if files:
+                    self.stl_path = os.path.join(search_dir, files[0])
+                    self.load_stl_mesh(self.stl_path)
+                    return
+            
+            # Absolute fallback baseline
             self.raw_stl_mesh = pv.Sphere(radius=0.2)
-            print(f"Using fallback sphere geometry. Error: {e}")
+            self.lbl_filename.setText("Using Fallback Sphere Mesh")
+
+    def load_stl_mesh(self, target_path):
+        """Safely parses target STL grid coordinates"""
+        try:
+            self.raw_stl_mesh = pv.read(target_path)
+            self.stl_path = target_path
+            self.lbl_filename.setText(f"File: {os.path.basename(target_path)}")
+        except Exception as e:
+            self.lbl_status.setText(f"Status: Failed to open target STL file! -> {e}")
+            self.lbl_status.setStyleSheet("color: red; font-weight: bold;")
+
+    def browse_stl_file(self):
+        """Launches explorer modal targeted at local simulation directory"""
+        default_dir = "constant/triSurface" if os.path.exists("constant/triSurface") else os.getcwd()
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Simulation STL Geometry", default_dir, 
+                                                   "STL Files (*.stl);;All Files (*)", options=options)
+        if file_path:
+            self.load_stl_mesh(file_path)
+            self.update_visualization()
 
     def sync_inputs(self):
         try:
@@ -145,6 +192,9 @@ class MeshTweakGUI(QMainWindow):
             self.lbl_status.setStyleSheet("color: orange; font-weight: bold; font-size: 14px;")
 
     def update_visualization(self):
+        if self.raw_stl_mesh is None:
+            return
+            
         self.plotter.clear()
         self.plotter.add_axes()
         self.plotter.show_grid()
